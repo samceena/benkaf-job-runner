@@ -78,7 +78,7 @@ func (m *MemoryStore) UpdateJob(ctx context.Context, j *job.Job) error {
 	return nil
 }
 
-func (m *MemoryStore) RegisterWorkers(ctx context.Context, workerId string) error {
+func (m *MemoryStore) RegisterWorker(ctx context.Context, workerId string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
