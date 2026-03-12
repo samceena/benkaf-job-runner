@@ -50,6 +50,24 @@ func (c *Controller) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(j)
 }
 
+func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("handleListWorkers called")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workers, err := c.store.ListWorkers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	fmt.Println("workers: ", workers)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(workers)
+}
+
 func (c *Controller) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -119,7 +137,7 @@ func (c *Controller) handleRegisterWorker(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(`{"status":"registered"}`))
 }
 
-func (c *Controller) jobAssignmetLoop(ctx context.Context) {
+func (c *Controller) jobAssignmentLoop(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -136,6 +154,7 @@ func (c *Controller) jobAssignmetLoop(ctx context.Context) {
 func (c *Controller) assignPendingJobs(ctx context.Context) {
 	workers, err := c.store.ListWorkers(ctx)
 	if err != nil || len(workers) == 0 {
+		fmt.Println("No worker found, stopping job assignment loop")
 		return
 	}
 
@@ -148,6 +167,7 @@ func (c *Controller) assignPendingJobs(ctx context.Context) {
 	defer c.mu.Unlock()
 
 	for _, j := range pending {
+		fmt.Println("searching for jobs...")
 		worker := workers[c.nextWorker%len(workers)]
 		c.nextWorker++
 
@@ -171,7 +191,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go ctrl.jobAssignmetLoop(ctx)
+	go ctrl.jobAssignmentLoop(ctx)
 
 	mux := http.NewServeMux()
 
@@ -184,6 +204,7 @@ func main() {
 	})
 	mux.HandleFunc("/jobs/", ctrl.handleGetJob)
 	mux.HandleFunc("/workers/register", ctrl.handleRegisterWorker)
+	mux.HandleFunc("/workers", ctrl.handleListWorkers)
 
 	log.Println("controller listenirng in :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
