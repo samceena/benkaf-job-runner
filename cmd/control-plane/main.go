@@ -112,14 +112,15 @@ func (c *Controller) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-func (c *Controller) handleRegisterWorker(w http.ResponseWriter, r *http.Request) {
+// This function can accept a single worker or workers to register
+func (c *Controller) handleRegisterWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req struct {
-		WorkerId string `json:"worker_id"`
+		WorkerIds []string `json:"worker_ids"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -127,8 +128,9 @@ func (c *Controller) handleRegisterWorker(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	fmt.Println("registering worker")
-	if err := c.store.RegisterWorker(r.Context(), req.WorkerId); err != nil {
+	log.Printf("Registering worker with ids %s", req.WorkerIds)
+
+	if err := c.store.RegisterWorkers(r.Context(), req.WorkerIds); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -167,7 +169,7 @@ func (c *Controller) assignPendingJobs(ctx context.Context) {
 	defer c.mu.Unlock()
 
 	for _, j := range pending {
-		fmt.Println("searching for jobs...")
+		fmt.Println("Searching for jobs...")
 		worker := workers[c.nextWorker%len(workers)]
 		c.nextWorker++
 
@@ -179,13 +181,15 @@ func (c *Controller) assignPendingJobs(ctx context.Context) {
 		if err := c.store.UpdateJob(ctx, j); err != nil {
 			log.Printf("failed to update job %s: %v", j.ID, err)
 		}
-		log.Printf("assigned job %s to worker %s", j.ID, worker)
+		log.Printf("Assigned job %s to worker %s", j.ID, worker)
 
 	}
 }
 
 func main() {
+	fmt.Println("Initializing MemoryStore")
 	store := storage.NewMemoryStore()
+	fmt.Println("Initializing Controller")
 	ctrl := NewController(store)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,9 +207,10 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/jobs/", ctrl.handleGetJob)
-	mux.HandleFunc("/workers/register", ctrl.handleRegisterWorker)
+	mux.HandleFunc("/workers/register", ctrl.handleRegisterWorkers)
 	mux.HandleFunc("/workers", ctrl.handleListWorkers)
 
-	log.Println("controller listenirng in :8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	port := ":8080"
+	log.Println("Controller started. Listening on port ", port)
+	log.Fatal(http.ListenAndServe(port, mux))
 }
