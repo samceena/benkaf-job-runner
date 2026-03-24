@@ -15,8 +15,7 @@ type Store interface {
 	UpdateJob(ctx context.Context, j *job.Job) error
 
 	// Workers
-	// Deprecated: Use RegisterWorkers instead.
-	RegisterWorker(ctx context.Context, workerId string) error
 	RegisterWorkers(ctx context.Context, workerId []string) error
 	ListWorkers(ctx context.Context) ([]string, error)
+	GetWorker(ctx context.Context, workerId string) (string, error)
 }

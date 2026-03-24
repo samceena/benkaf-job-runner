@@ -62,10 +62,6 @@ func (m *MemoryStore) ListJobsByState(ctx context.Context, state job.JobState) (
 }
 
 func (m *MemoryStore) UpdateJob(ctx context.Context, j *job.Job) error {
-	// most of the lock code here will block or may block it the process to acuire the lock is long on takes timesav
-	//is this true? will this block?
-	//should we do tryLock?
-	//this is differrent from a dsitributed lock though
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -88,14 +84,6 @@ func (m *MemoryStore) RegisterWorkers(ctx context.Context, workerIds []string) e
 	return nil
 }
 
-func (m *MemoryStore) RegisterWorker(ctx context.Context, workerId string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.workers[workerId] = true
-	return nil
-}
-
 func (m *MemoryStore) ListWorkers(ctx context.Context) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -105,4 +93,16 @@ func (m *MemoryStore) ListWorkers(ctx context.Context) ([]string, error) {
 		result = append(result, id)
 	}
 	return result, nil
+}
+
+func (m *MemoryStore) GetWorker(ctx context.Context, workerId string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	workerExists := m.workers[workerId]
+	if workerExists {
+		return workerId, nil
+	}
+	return "", fmt.Errorf("worker %s not found", workerId)
+
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -51,7 +50,6 @@ func (c *Controller) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("handleListWorkers called")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -62,7 +60,6 @@ func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	fmt.Println("workers: ", workers)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(workers)
@@ -112,6 +109,28 @@ func (c *Controller) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+func (c *Controller) handleGetWorker(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workerId := strings.TrimPrefix(r.URL.Path, "/workers/")
+	if workerId == "" {
+		http.Error(w, "Worker id is required", http.StatusBadRequest)
+		return
+	}
+
+	worker, err := c.store.GetWorker(r.Context(), workerId)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(worker)
+}
+
 // This function can accept a single worker or workers to register
 func (c *Controller) handleRegisterWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -128,7 +147,7 @@ func (c *Controller) handleRegisterWorkers(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	log.Printf("Registering worker with ids %s", req.WorkerIds)
+	log.Printf("Registering worker with ids %v", req.WorkerIds)
 
 	if err := c.store.RegisterWorkers(r.Context(), req.WorkerIds); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -153,10 +172,33 @@ func (c *Controller) jobAssignmentLoop(ctx context.Context) {
 	}
 }
 
+// assignPendingJobs uses round-robin to select which worker gets each pending job.
+// nextWorker is a counter that increments with each assignment.
+// The Modulo % wraps it around the workers slice so it cycles: 0, 1, 2, ..., n-1, 0, 1, 2, ...
+// For example with 3 workers: 0%3=0, 1%3=1, 2%3=2, 3%3=0 (wraps back).
+//
+// Trade-offs of this round-robin:
+// - No load awareness: if one worker gets a long-running job, it still receives the next
+//   job in rotation even though it's busy. Other workers that are idle will just sit waiting for their turn.
+// - No job-cost awareness: all jobs are treated as equal, but in practice some jobs take
+//   seconds and others take minutes.
+// - Not optimal for weighted scenarios or heterogeneous workers (different CPU/memory).
+// - Simple and fair enough for Phase 1.
+//
+// Alternatives to consider in later phases:
+// - Work-stealing: workers pull jobs when idle (naturally balances load)
+// - Least-loaded: assign to the worker with the fewest active jobs
+// - Weighted round-robin: give more turns to stronger workers
+// - Consistent hashing: hash job to a specific worker (good for cache affinity).
+//   Useful when a worker maintains cached state for faster execution. For example,
+//   if worker-3 always handles emails for user-2, it can cache auth tokens or user
+//   settings so subsequent jobs for that user are faster than on a cold worker.
+// - Random: simple but can be uneven under low volume
+
 func (c *Controller) assignPendingJobs(ctx context.Context) {
 	workers, err := c.store.ListWorkers(ctx)
 	if err != nil || len(workers) == 0 {
-		fmt.Println("No worker found, stopping job assignment loop")
+		log.Printf("No worker found, stopping job assignment loop")
 		return
 	}
 
@@ -169,8 +211,10 @@ func (c *Controller) assignPendingJobs(ctx context.Context) {
 	defer c.mu.Unlock()
 
 	for _, j := range pending {
-		fmt.Println("Searching for jobs...")
-		worker := workers[c.nextWorker%len(workers)]
+		log.Printf("Searching for jobs...")
+
+		workerIndexToUse := c.nextWorker % len(workers)
+		worker := workers[workerIndexToUse]
 		c.nextWorker++
 
 		if err := j.TransitionTo(job.ClaimedState); err != nil {
@@ -187,9 +231,10 @@ func (c *Controller) assignPendingJobs(ctx context.Context) {
 }
 
 func main() {
-	fmt.Println("Initializing MemoryStore")
+	log.Printf("Initializing MemoryStore")
 	store := storage.NewMemoryStore()
-	fmt.Println("Initializing Controller")
+
+	log.Printf("Initializing Controller")
 	ctrl := NewController(store)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -199,6 +244,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Jobs
 	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			ctrl.handleSubmitJob(w, r)
@@ -207,7 +253,10 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/jobs/", ctrl.handleGetJob)
+
+	// Workers
 	mux.HandleFunc("/workers/register", ctrl.handleRegisterWorkers)
+	mux.HandleFunc("/workers/", ctrl.handleGetWorker)
 	mux.HandleFunc("/workers", ctrl.handleListWorkers)
 
 	port := ":8080"
