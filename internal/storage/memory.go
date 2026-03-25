@@ -74,6 +74,20 @@ func (m *MemoryStore) UpdateJob(ctx context.Context, j *job.Job) error {
 	return nil
 }
 
+func (m *MemoryStore) ListJobsByWorkerAndState(ctx context.Context, workerId string, jobState job.JobState) ([]*job.Job, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var result []*job.Job
+	for _, j := range m.jobs {
+		if j.WorkerID == workerId && j.State == jobState {
+			jobData := *j
+			result = append(result, &jobData)
+		}
+	}
+	return result, nil
+}
+
 func (m *MemoryStore) RegisterWorkers(ctx context.Context, workerIds []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
