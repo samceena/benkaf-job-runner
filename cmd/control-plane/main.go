@@ -49,6 +49,40 @@ func (c *Controller) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(j)
 }
 
+func (c *Controller) handleStartJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	id = strings.TrimSuffix(id, "/start")
+
+	if id == "" {
+		http.Error(w, "job id required", http.StatusBadRequest)
+		return
+	}
+
+	j, err := c.store.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := j.TransitionTo(job.RunningState); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	if err := c.store.UpdateJob(r.Context(), j); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("job %s started by worker %s", j.ID, j.WorkerID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(j)
+}
+
 func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -342,6 +376,8 @@ func main() {
 	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
+		case strings.HasSuffix(path, "/start"):
+			ctrl.handleStartJob(w, r)
 		case strings.HasSuffix(path, "/complete"):
 			ctrl.handleCompleteJob(w, r)
 		case strings.HasSuffix(path, "/fail"):
