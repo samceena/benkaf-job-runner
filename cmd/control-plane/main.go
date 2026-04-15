@@ -393,6 +393,15 @@ func main() {
 	mux.HandleFunc("/workers", ctrl.handleListWorkers)
 
 	port := ":8080"
+	srv := &http.Server{
+		Addr:              port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// WriteTimeout is empty for now. Will add when
+		// streaming/long-poll endpoints (e.g. worker heartbeat) land.
+	}
 	log.Println("Controller started. Listening on port ", port)
-	log.Fatal(http.ListenAndServe(port, mux))
+	log.Fatal(srv.ListenAndServe())
 }
