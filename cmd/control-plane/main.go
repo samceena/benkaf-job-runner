@@ -49,6 +49,40 @@ func (c *Controller) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(j)
 }
 
+func (c *Controller) handleStartJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	id = strings.TrimSuffix(id, "/start")
+
+	if id == "" {
+		http.Error(w, "job id required", http.StatusBadRequest)
+		return
+	}
+
+	j, err := c.store.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := j.TransitionTo(job.RunningState); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	if err := c.store.UpdateJob(r.Context(), j); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("job %s started by worker %s", j.ID, j.WorkerID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(j)
+}
+
 func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -65,6 +99,9 @@ func (c *Controller) handleListWorkers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(workers)
 }
 
+// if the request has "worker_id" in it we use ListJobsByWorkerAndState else we use ListJobsByState
+//
+//	GET {{url}}/jobs?state=claimed&worker_id=worker-1
 func (c *Controller) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -77,7 +114,16 @@ func (c *Controller) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	state := job.JobState(strings.ToUpper(stateParam))
-	jobs, err := c.store.ListJobsByState(r.Context(), state)
+	workerId := r.URL.Query().Get("worker_id")
+
+	var jobs []*job.Job
+	var err error
+	if workerId != "" {
+		jobs, err = c.store.ListJobsByWorkerAndState(r.Context(), workerId, state)
+	} else {
+		jobs, err = c.store.ListJobsByState(r.Context(), state)
+	}
+
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -156,6 +202,78 @@ func (c *Controller) handleRegisterWorkers(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"registered"}`))
+}
+
+func (c *Controller) handleCompleteJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	id = strings.TrimSuffix(id, "/complete")
+
+	if id == "" {
+		http.Error(w, "job id required", http.StatusBadRequest)
+		return
+	}
+
+	j, err := c.store.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := j.TransitionTo(job.CompletedState); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	updateJobErr := c.store.UpdateJob(r.Context(), j)
+	if updateJobErr != nil {
+		http.Error(w, updateJobErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Job %s completed", j.ID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(j)
+}
+
+func (c *Controller) handleFailJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
+	id = strings.TrimSuffix(id, "/fail")
+
+	if id == "" {
+		http.Error(w, "job id required", http.StatusBadRequest)
+		return
+	}
+
+	j, err := c.store.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if err := j.TransitionTo(job.FailedState); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+
+	if err := c.store.UpdateJob(r.Context(), j); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Job %s Failed", j.ID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(j)
+
 }
 
 func (c *Controller) jobAssignmentLoop(ctx context.Context) {
@@ -245,6 +363,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Jobs
+	//  for the url endpoint with /jobs
 	mux.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			ctrl.handleSubmitJob(w, r)
@@ -252,7 +371,21 @@ func main() {
 			ctrl.handleListJobs(w, r)
 		}
 	})
-	mux.HandleFunc("/jobs/", ctrl.handleGetJob)
+
+	//  for the url endpoint with /jobs/*
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		switch {
+		case strings.HasSuffix(path, "/start"):
+			ctrl.handleStartJob(w, r)
+		case strings.HasSuffix(path, "/complete"):
+			ctrl.handleCompleteJob(w, r)
+		case strings.HasSuffix(path, "/fail"):
+			ctrl.handleFailJob(w, r)
+		default:
+			ctrl.handleGetJob(w, r)
+		}
+	})
 
 	// Workers
 	mux.HandleFunc("/workers/register", ctrl.handleRegisterWorkers)
@@ -260,6 +393,15 @@ func main() {
 	mux.HandleFunc("/workers", ctrl.handleListWorkers)
 
 	port := ":8080"
+	srv := &http.Server{
+		Addr:              port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// WriteTimeout is empty for now. Will add when
+		// streaming/long-poll endpoints (e.g. worker heartbeat) land.
+	}
 	log.Println("Controller started. Listening on port ", port)
-	log.Fatal(http.ListenAndServe(port, mux))
+	log.Fatal(srv.ListenAndServe())
 }

@@ -13,6 +13,7 @@ type Store interface {
 	GetJob(ctx context.Context, id string) (*job.Job, error)
 	ListJobsByState(ctx context.Context, state job.JobState) ([]*job.Job, error)
 	UpdateJob(ctx context.Context, j *job.Job) error
+	ListJobsByWorkerAndState(ctx context.Context, workerId string, jobState job.JobState) ([]*job.Job, error)
 
 	// Workers
 	RegisterWorkers(ctx context.Context, workerId []string) error

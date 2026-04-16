@@ -33,7 +33,7 @@ type Job struct {
 // for an happy path, when a worker gets a request to perform a job
 // it will go from Pending -> Claim -> Running -> (Completed of Failed)
 // this map also includes unhappy path as well.
-// if a worker dies befoe execution, ths state transiton will be Claimed -> Pending , in this case it'll be safe to reassign the job to another worker
+// if a worker dies before execution, ths state transiton will be Claimed -> Pending , in this case it'll be safe to reassign the job to another worker
 var validJobStateTransitions = map[JobState][]JobState{
 	PendingState:   {ClaimedState},
 	ClaimedState:   {RunningState, PendingState},
