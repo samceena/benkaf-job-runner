@@ -1,4 +1,4 @@
-.PHONY: run test test-unit test-integration test-race ci
+.PHONY: run test test-unit test-integration test-race gh-ci
 
 run:
 	go run cmd/control-plane/main.go
@@ -16,6 +16,6 @@ test-race:
 	go test -v -race ./...
 
 # github actions CI
-ci: test-race
+gh-ci: test-race
 	go vet ./...
 	go build ./...
