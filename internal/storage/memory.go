@@ -51,7 +51,7 @@ func (m *MemoryStore) ListJobsByState(ctx context.Context, state job.JobState) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var result []*job.Job
+	result := make([]*job.Job, 0)
 	for _, j := range m.jobs {
 		if j.State == state {
 			copied := *j
@@ -78,7 +78,7 @@ func (m *MemoryStore) ListJobsByWorkerAndState(ctx context.Context, workerId str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var result []*job.Job
+	result := make([]*job.Job, 0)
 	for _, j := range m.jobs {
 		if j.WorkerID == workerId && j.State == jobState {
 			jobData := *j
@@ -102,7 +102,7 @@ func (m *MemoryStore) ListWorkers(ctx context.Context) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var result []string
+	result := make([]string, 0)
 	for id := range m.workers {
 		result = append(result, id)
 	}
