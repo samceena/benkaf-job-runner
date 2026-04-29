@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/samceena/benkaf-job-runner/internal/job"
@@ -212,4 +214,99 @@ func TestGetWorker_NotFound(t *testing.T) {
 	if _, err := store.GetWorker(ctx, "nobody"); err == nil {
 		t.Fatalf("expected error for missing worker, got nil")
 	}
+}
+
+func TestMemoryStore_Concurrent_CreateAndGet(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	const n = 20
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			j := job.NewJob(fmt.Sprintf("job-%d", i), nil)
+			if err := store.CreateJob(ctx, j); err != nil {
+				t.Errorf("CreateJob: %v", err)
+				return
+			}
+			if _, err := store.GetJob(ctx, j.ID); err != nil {
+				t.Errorf("GetJob: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	pending, err := store.ListJobsByState(ctx, job.PendingState)
+	if err != nil {
+		t.Fatalf("ListJobsByState: %v", err)
+	}
+	if len(pending) != n {
+		t.Errorf("expected %d pending jobs, got %d", n, len(pending))
+	}
+}
+
+func TestMemoryStore_Concurrent_RegisterWorkers(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	const goroutinesCount = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutinesCount)
+
+	for i := 0; i < goroutinesCount; i++ {
+		go func(i int) {
+			defer wg.Done()
+			ids := []string{
+				fmt.Sprintf("w-%d", i), "shared",
+			}
+			if err := store.RegisterWorkers(ctx, ids); err != nil {
+				t.Errorf("RegisterWorjers: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	workers, err := store.ListWorkers(ctx)
+	if err != nil {
+		t.Fatalf("ListWorkers: %v", err)
+	}
+	if len(workers) != goroutinesCount+1 {
+		t.Errorf("expected %d workers, got %d", goroutinesCount+1, len(workers))
+	}
+}
+
+func TestMemoryStore_Concurrent_ListDuringWrites(t *testing.T) {
+
+	ctx := context.Background()
+	store := NewMemoryStore()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		i := 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				j := job.NewJob(fmt.Sprintf("j-%d", i), nil)
+				_ = store.CreateJob(ctx, j)
+				i++
+			}
+		}
+	}()
+
+	for i := 0; i < 1000; i++ {
+		if _, err := store.ListJobsByState(ctx, job.PendingState); err != nil {
+			t.Errorf("ListJobsByState: %v", err)
+			break
+		}
+	}
+	close(stop)
+	wg.Wait()
 }

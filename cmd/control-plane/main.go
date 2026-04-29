@@ -312,6 +312,8 @@ func (c *Controller) jobAssignmentLoop(ctx context.Context) {
 //   if worker-3 always handles emails for user-2, it can cache auth tokens or user
 //   settings so subsequent jobs for that user are faster than on a cold worker.
 // - Random: simple but can be uneven under low volume
+//
+// TODO: Explore having a mix of these.
 
 func (c *Controller) assignPendingJobs(ctx context.Context) {
 	workers, err := c.store.ListWorkers(ctx)

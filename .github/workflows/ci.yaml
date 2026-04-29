@@ -1,0 +1,22 @@
+name: Run CI - Test, Build & Vet
+
+on: [push]
+
+jobs:
+  ci:
+
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.5'
+
+      - name: Display Go Version    
+        run: go version
+
+      - name: Run CI - Test, Build & Vet
+        run: make gh-ci
