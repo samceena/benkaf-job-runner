@@ -12,6 +12,9 @@ test-unit:
 test-integration:
 	go test -v ./cmd/...
 
+build:
+	go build ./...
+
 test-race:
 	go test -v -race ./...
 
